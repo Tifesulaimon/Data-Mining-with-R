@@ -1,0 +1,357 @@
+---
+title: "Data Minning Coursework"
+author: "Boluwatife"
+date: "11/17/2021"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+```{r llibraries, include=FALSE}
+# Load required libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(pander)
+library(caret)
+library(mlbench)
+library(partykit)
+library(rattle)
+library(class)
+library(psych)
+library(cluster)
+library(forcats)
+library(rgl)
+library(clue)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+set.seed(123)
+# read csv file
+ride4U <- read.csv("ride4U.csv")
+
+# convert data.frame to tibble
+ride4U <- tibble::as_tibble(ride4U)
+```
+
+```{r include=FALSE}
+# glimpse information about data-set
+glimpse(ride4U)
+```
+
+
+```{r include=FALSE}
+#frequency, relative frequency, and cumulative frequency table of month
+ride4U %>% group_by(month) %>% summarize(frequency = n()) %>% arrange(desc(frequency)) %>% mutate(relative_frequency = frequency/sum(frequency), relative_cumulative_frequency = cumsum(relative_frequency), relative_frequency = round(100*relative_frequency, 2), relative_cumulative_frequency = round(100*relative_cumulative_frequency,2), nr = row_number(-frequency)) %>% select(nr, everything()) %>% pander()
+```
+
+
+
+```{r Univariate and Bivariate analysis, warning=FALSE}
+## Univariate analysis
+ggplot(ride4U) + geom_bar(aes(fct_infreq(month)), color = "black", fill = "grey")  + labs(title = "Number of complaints per month", x = "Month", y = "Number of complains") + scale_y_continuous(breaks = seq(0, 65, 5)) + theme_minimal() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+# compare information for extreme months
+compr4U <- ride4U[ride4U$month == "February" | ride4U$month == "August",]
+ride4U %>% ggplot(aes(month, uses)) + geom_line() + geom_point()+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ride4U %>% ggplot(aes(complaints, temperature)) + geom_boxplot()+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+## compare effect of variables on level of complaint
+
+ride4U %>% ggplot(aes(complaints, uses)) + geom_line() + geom_boxplot()+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ride4U %>% ggplot(aes(complaints)) + geom_bar(aes(fill = holiday)) + facet_grid(~holiday)+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ride4U %>% ggplot(aes(complaints)) + geom_bar(aes(fill = holiday)) + facet_grid(~outlook)+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ride4U %>% ggplot(aes(feel_humidity)) + geom_bar(aes(fill = complaints))
+ride4U %>% ggplot(aes(x=month, y=uses)) + geom_boxplot() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+```{r }
+## Using Ride4U to obtain three further datasets
+ride4U40 <- sample_frac(ride4U, 0.4)
+ride4U20 <- sample_frac(ride4U40, 0.5)
+
+```
+
+
+```{r Noise Introduction,}
+## Corrupt 15% of datasets
+dodgyride4U <- ride4U
+
+# chose an average of 15% to corrupt at random
+corrupt <- rbinom(nrow(ride4U), 1, 0.15)
+corrupt <- as.logical(corrupt)
+
+# generate the noise to add to outlook
+vals <- levels(ride4U$outlook)
+noise <- sample(ride4U$outlook, length(ride4U$outlook) - 1, replace = TRUE)
+dodgyride4U$outlook[corrupt] <- noise[corrupt]
+
+# generate noise for selected instances for temperature
+noise <- rnorm(corrupt, median(ride4U$temperature), sd(ride4U$temperature))
+dodgyride4U$temperature[corrupt] <- as.integer(noise[corrupt])
+```
+
+3. Insight Obtainable from Using a dataset with Noise
+
+
+```{r data pre processing and preparation,}
+preprocess_dataframe <- function(df) {
+    df <- na.omit(df)
+    df$label <- case_when(
+    df$complaints %in% c('very_few') ~ '0',
+    df$complaints %in% c('some') ~ '1',
+    df$complaints %in% c('lots') ~ '2',
+  )
+  df <- subset(df, select= -c(complaints, country))
+  df <- as.data.frame(unclass(df), stringsAsFactors = TRUE)
+  
+  return (df)
+}
+
+## Preparing the datasets for classification
+prepare_dataframe <- function(df) {
+  intrain <- createDataPartition(y = df$label, p=0.7, list = FALSE)
+  return (intrain)
+}
+
+```
+
+```{r defining model,}
+run_tree_classifier <- function(df, ctrl) {
+  tree <- train(df[,1:12], df$label, method = "rpart", tuneLength = 12, trControl = ctrl)
+  return (tree)
+}
+
+
+run_instance_classifier <- function(df, ctrl) {
+  knn <- train(label ~ ., data = df, method = "knn", trControl = ctrl, preProcess = c("center", "scale"), tuneLength = 20)
+  return (knn)
+}
+
+```
+
+```{r tree_classifier, message=FALSE, warning=FALSE}
+ride4U <- preprocess_dataframe(ride4U)
+ride4U20 <- preprocess_dataframe(ride4U20)
+ride4U40 <- preprocess_dataframe(ride4U40)
+dodgyride4U <- preprocess_dataframe(dodgyride4U)
+
+r4uout <- prepare_dataframe(ride4U)
+r4u20out <- prepare_dataframe(ride4U20)
+r4u40out <- prepare_dataframe(ride4U40)
+r4udodgyout <- prepare_dataframe(dodgyride4U)
+
+r4ut <- as.data.frame(ride4U[r4uout,])
+r4ute <- as.data.frame(ride4U[-r4uout, ])
+r4u20t <- as.data.frame(ride4U20[r4u20out,])
+r4u20te <- as.data.frame(ride4U20[-r4u20out,])
+r4u40t <- as.data.frame(ride4U40[r4u40out,])
+r4u40te <- as.data.frame(ride4U40[-r4u40out,])
+r4udodgyt <- as.data.frame(dodgyride4U[r4udodgyout,])
+r4udodgyte <- as.data.frame(dodgyride4U[-r4udodgyout, ])
+
+
+ctrl <- trainControl(method = "repeatedcv", number = 3, repeats = 3, verboseIter=TRUE)
+
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# building the tree
+set.seed(123)
+ride4Uclfr <- run_tree_classifier(r4ut, ctrl)
+ride4U20clfr <- run_tree_classifier(r4u20t, ctrl)
+ride4U40clfr <- run_tree_classifier(r4u40t, ctrl)
+dodgyride4Uclfr <- run_tree_classifier(r4udodgyt, ctrl)
+```
+
+
+```{r tree classifier comparism, message=FALSE, warning=FALSE, paged.print=FALSE}
+r4uc <- confusionMatrix.train(ride4Uclfr, norm="none")
+print("ride4U confusion Matrix")
+r4uc
+
+r4u20c <- confusionMatrix.train(ride4U20clfr, norm="none")
+print("ride4U20 confusion Matrix")
+r4u20c
+
+r4u40c <- confusionMatrix.train(ride4U40clfr, norm="none")
+print("ride4U40 confusio Matrix")
+r4u40c
+
+# collect resamples
+results <- resamples(list(ride4U = ride4Uclfr, ride4U20 = ride4U20clfr, ride4U40 = ride4U40clfr))
+results
+summary(results)
+
+scales <- list(x=list(relation="free"), y=list(relation="free"))
+dotplot(results, scales=scales, conf.level = 0.95)
+
+bwplot(results)
+splom(results)
+```
+
+
+
+4. Tree classifier discussion
+
+```{r Train KNN Classifier, }
+# building instance classifier
+ride4Uinstclf <- run_instance_classifier(r4ut, ctrl)
+dodgyride4Uinstclf <- run_instance_classifier(r4udodgyt, ctrl)
+```
+
+
+```{r Instance classifier comparism, echo=FALSE}
+  print("ride4U tree model confusion matrix")
+  r4UtCM <- confusionMatrix.train(ride4Uclfr, norm="none")
+  print(r4UtCM)
+    print("dodgyride4U tree model confusion matrix")
+  doddgyr4UtcM <- confusionMatrix.train(dodgyride4Uclfr, norm="none")
+  print(doddgyr4UtcM)
+  print("ride4U instance model confusion matrix")
+  r4UiCM <- confusionMatrix.train(ride4Uinstclf, norm="none")
+  print(r4UiCM)
+  print("dodgyride4U instance model confusion matrix")
+  dodgyride4UiCM <- confusionMatrix.train(dodgyride4Uinstclf, norm = "none")
+  print(dodgyride4UiCM)
+  
+  # collect resamples
+results <- resamples(list(ride4Ut = ride4Uclfr, dodgyride4Ut = dodgyride4Uclfr, ride4Ui = ride4Uinstclf, dodgyride4Ui = dodgyride4Uinstclf))
+results
+summary(results)
+
+scales <- list(x=list(relation="free"), y=list(relation="free"))
+dotplot(results, scales=scales, conf.level = 0.95)
+
+bwplot(results)
+splom(results)
+
+```
+```{r}
+ride4Uinstclfp <- predict(ride4Uinstclf, newdata = r4ute)
+r4Uic <- confusionMatrix(ride4Uinstclfp, r4ute$label)
+print("confusion matrix for ride4U knn")
+print(r4Uic)
+
+dodgyride4Uinstclfp <- predict(dodgyride4Uinstclf, newdata = r4udodgyte)
+r4udic <- confusionMatrix(dodgyride4Uinstclfp, r4udodgyte$label)
+print("confusion Matrix for dodgy ride4U knn")
+print(r4udic)
+```
+
+
+
+```{r model validation, echo=FALSE}
+# Read test dataset 
+# read csv file
+ride4UT <- read.csv("ride4UT.csv")
+
+# convert data.frame to tibble
+ride4UT <- tibble::as_tibble(ride4UT)
+
+ride4UT <- preprocess_dataframe(ride4UT)
+predictionstree <- predict(ride4Uclfr, newdata = ride4UT)
+dodgypredictionstree <- predict(dodgyride4Uclfr, newdata = ride4UT)
+predictions <- predict(ride4Uinstclf, newdata = ride4UT)
+dodgypredictions <- predict(dodgyride4Uinstclf, newdata = ride4UT)
+cm <- confusionMatrix(predictions, ride4UT$label)
+doddgycm <- confusionMatrix(dodgypredictions, ride4UT$label)
+cmt <- confusionMatrix(predictionstree, ride4UT$label)
+doddgycmt <- confusionMatrix(dodgypredictionstree, ride4UT$label)
+print("Instance")
+print(cm)
+print(doddgycm)
+print("Tree")
+print(cmt)
+print(doddgycmt)
+
+```
+6. Model validation Result
+
+
+
+```{r clustering ride4U}
+# make copy of the dataset
+ride4UC <- ride4U
+# select outcome variable
+label_outcom <- ride4UC %>% select(label)
+# remove outcome variable from dataset
+ride4UC <- ride4UC %>% select(-label)
+
+# scale numeric variables
+#ride4UC[, c("day", "humidity", "uses", "temperature")] <- scale(ride4UC[, c("day", "humidity", "uses", "temperature")])
+
+# dummy code variables with two levels and are coded 1/0
+ride4UC$holiday <- ifelse(ride4UC$holiday == "yes", 1, 0)
+
+# dummy code variables that have three or more levels
+city <- as.data.frame(dummy.code(ride4UC$city))
+month <- as.data.frame(dummy.code(ride4UC$month))
+day_of_week <- as.data.frame(dummy.code(ride4UC$day_of_week))
+outlook <- as.data.frame(dummy.code(ride4UC$outlook))
+feel_humidity <- as.data.frame(dummy.code(ride4UC$feel_humidity))
+wind <- as.data.frame(dummy.code(ride4UC$wind))
+
+# combine new dummy variables with original dataset
+ride4UC <- cbind(ride4UC, city, month, day_of_week, outlook, feel_humidity, wind)
+
+#remove original values that had to be dummy coded
+ride4UC <- ride4UC %>% select(-one_of(c("city", "month", "day_of_week", "outlook", "feel_humidity", "wind")))
+
+# remove zero variance column from dataset
+ride4UC <- ride4UC[ , which(apply(ride4UC, 2, var) != 0)]
+
+
+# preprocessing
+prepride4U <- preProcess(ride4UC, method = c("center", "scale", "pca"), pcaComp = 4)
+ride4UC2 <- predict(prepride4U, newdata = ride4UC)
+
+
+
+```
+
+
+```{r}
+# find best k using the silhouette method
+sil <- NULL
+
+for (i in 2:12) {
+  res <- kmeans(ride4UC2, centers = i, nstart = 25)
+  ss <- silhouette(res$cluster, dist(ride4UC2))
+  sil[i] <- mean(ss[, 3])
+}
+
+plot(1:12, sil, type="b", xlab="k = Number of Clusters", ylab = "Average silhouette")
+
+# find best k using the elbow method
+wss <- NULL
+for (i in 2:15) {
+  wss[i] <- sum(kmeans(ride4UC2, centers=i, nstart = 100, iter.max = 1000)$withinss)
+}
+plot(1:15, wss, type="b", xlab="k= Number of Clusters", ylab="Within groups sum of squares")
+
+km <- kmeans(ride4UC2, 3, nstart = 25, iter.max = 1000)
+
+#plotting the result
+plot3d(ride4UC2$PC1, ride4UC2$PC2, col=km$cluster)
+
+sort(table(km$cluster))
+clust <- names(sort(table(km$cluster)))
+
+row.names(ride4UC[km$cluster == clust[1],])
+row.names(ride4UC[km$cluster == clust[2],])
+
+boxplot(ride4UC$uses ~ km$cluster, xlab="Cluster", ylab="Uses", main="Bicycle uses by Cluster")
+boxplot(ride4UC$temperature ~ km$cluster, xlab="Cluster", ylab="Uses", main="Temperature by Cluster")
+boxplot(ride4UC$humidity ~ km$cluster, xlab="Cluster", ylab="Uses", main="Humidity by Cluster")
+boxplot(ride4UC$comfortable ~ km$cluster, xlab="Cluster", ylab="Comfortable", main="Comfortable by Cluster")
+
+ride4UC[km$cluster==clust[1], 1:20]
+ride4UC[km$cluster==clust[2], 1:20]
+ride4UC[km$cluster==clust[3], 1:22]
+
+
+```
+
+
